@@ -14,7 +14,8 @@
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --testPathPattern=\\.test\\.ts$ --testPathIgnorePatterns=\\.int\\.test\\.ts$",
     "test:int": "node --experimental-vm-modules node_modules/jest/bin/jest.js --testPathPattern=\\.int\\.test\\.ts$",
     "lint": "eslint src",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "dev": "npx @langchain/langgraph-cli@latest dev"
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.12",
