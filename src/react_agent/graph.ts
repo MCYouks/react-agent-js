@@ -1,7 +1,10 @@
+import { AIMessage } from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
 import { MessagesAnnotation, StateGraph } from "@langchain/langgraph";
+import { ToolNode } from "@langchain/langgraph/prebuilt";
 
 import { ConfigurationSchema, ensureConfiguration } from "./configuration.js";
+import { THINKING_TOOLS } from "./tools.js";
 import { loadChatModel } from "./utils.js";
 import { calculatorGraph } from "./calculator_agent.js";
 
@@ -36,19 +39,24 @@ For overtime calculations, specify:
 - Overtime multiplier: 1.25
 - Calculation needed: 5 × €12 × 1.25"
 
-Your output will be sent to a calculator agent that will perform all the calculations and complete the pay stub with the actual numerical results.
+You have access to a search tool that allows you to look up information on the internet. Use this tool when:
+- You need to verify specific rates, coefficients, or rules for French payroll processing
+- You're unsure about a particular calculation method or legal requirement
+- You need up-to-date information about social security contributions
+
+Your final output will be sent to a calculator agent that will perform all the calculations and complete the pay stub with the actual numerical results.
 `;
 
 // Define the function that calls the model for the thinking process
-async function callThinkingModel(
+async function analyzerNode(
   state: typeof MessagesAnnotation.State,
   config: RunnableConfig,
 ): Promise<typeof MessagesAnnotation.Update> {
   /** Call the LLM powering our thinking agent. **/
   const configuration = ensureConfiguration(config);
 
-  // Use the thinking system prompt
-  const model = await loadChatModel(configuration.model);
+  // Use the thinking system prompt and bind the search tool
+  const model = (await loadChatModel(configuration.model)).bindTools(THINKING_TOOLS);
 
   const response = await model.invoke([
     {
@@ -62,54 +70,41 @@ async function callThinkingModel(
   return { messages: [response] };
 }
 
-// Define the function that processes the thinking output and passes it to the calculator agent
-async function processThinking(
-  state: typeof MessagesAnnotation.State,
-  config: RunnableConfig,
-): Promise<typeof MessagesAnnotation.Update> {
+// Define the function that determines whether to continue or not for the thinking agent
+function routeThinkingOutput(state: typeof MessagesAnnotation.State): "researchTool" | "calculatorNode" {
   const messages = state.messages;
-  const thinkingOutput = messages[messages.length - 1];
-  
-  // Get the configuration
-  const configuration = ensureConfiguration(config);
-  
-  // Call the calculator agent with the thinking output
-  const calculatorResult = await calculatorGraph.invoke(
-    {
-      messages: [
-        {
-          role: "user",
-          content: `Please perform all the calculations in the following thinking process and complete the pay stub:\n\n${thinkingOutput.content}`
-        }
-      ]
-    },
-    {
-      configurable: {
-        systemPromptTemplate: configuration.systemPromptTemplate,
-        model: configuration.model
-      }
-    }
-  );
-  
-  // Get the final message from the calculator agent
-  const calculatorOutput = calculatorResult.messages[calculatorResult.messages.length - 1];
-  
-  // Return the calculator output
-  return { messages: [calculatorOutput] };
+  const lastMessage = messages[messages.length - 1];
+  // If the LLM is invoking tools, route there.
+  if ((lastMessage as AIMessage)?.tool_calls?.length || 0 > 0) {
+    return "researchTool";
+  }
+  // Otherwise, proceed to the calculator input preparation
+  else {
+    return "calculatorNode";
+  }
 }
 
-// Define a new graph. We use the prebuilt MessagesAnnotation to define state:
-// https://langchain-ai.github.io/langgraphjs/concepts/low_level/#messagesannotation
+// Define a new graph with the ReAct pattern for the thinking agent
 const workflow = new StateGraph(MessagesAnnotation, ConfigurationSchema)
   // Define the nodes in our workflow
-  .addNode("callModel", callThinkingModel)
-  .addNode("calculator", calculatorGraph)
-  // Set the entrypoint as `callThinkingModel`
-  .addEdge("__start__", "callModel")
-  // After thinking model is called, process the thinking
-  .addEdge("callModel", "calculator")
-  // After processing thinking, end the workflow
-  .addEdge("calculator", "__end__");
+  .addNode("analyzerNode", analyzerNode)
+  .addNode("researchTool", new ToolNode(THINKING_TOOLS))
+  .addNode("calculatorNode", calculatorGraph)
+  // Set the entrypoint as analyzerNode
+  .addEdge("__start__", "analyzerNode")
+  // Add conditional edges for the thinking agent
+  .addConditionalEdges(
+    "analyzerNode",
+    routeThinkingOutput,
+    {
+      researchTool: "researchTool",
+      calculatorNode: "calculatorNode"
+    }
+  )
+  // After using tools, go back to the thinking model
+  .addEdge("researchTool", "analyzerNode")
+  // After calculator input is prepared, end the workflow
+  .addEdge("calculatorNode", "__end__");
 
 // Finally, we compile it!
 // This compiles it into a graph you can invoke and deploy.

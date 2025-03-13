@@ -4,11 +4,8 @@ import { MessagesAnnotation, StateGraph } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 
 import { ConfigurationSchema, ensureConfiguration } from "./configuration.js";
-import { Calculator } from "@langchain/community/tools/calculator";
+import { CALCULATOR_TOOLS } from "./tools.js";
 import { loadChatModel } from "./utils.js";
-
-// Define the calculator tool
-const CALCULATOR_TOOLS = [new Calculator()];
 
 // Define the system prompt for the calculator agent
 const CALCULATOR_SYSTEM_PROMPT = `
@@ -51,6 +48,10 @@ async function calculatorCallModel(
   const configuration = ensureConfiguration(config);
 
   const model = (await loadChatModel(configuration.model)).bindTools(CALCULATOR_TOOLS);
+
+  const lastMessage = state.messages[state.messages.length - 1];
+
+  console.log("lastMessage", lastMessage);
 
   const response = await model.invoke([
     {
