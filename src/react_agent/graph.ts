@@ -1,10 +1,7 @@
-import { AIMessage } from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
 import { MessagesAnnotation, StateGraph } from "@langchain/langgraph";
-import { ToolNode } from "@langchain/langgraph/prebuilt";
 
 import { ConfigurationSchema, ensureConfiguration } from "./configuration.js";
-import { TOOLS } from "./tools.js";
 import { loadChatModel } from "./utils.js";
 import { calculatorGraph } from "./calculator_agent.js";
 
@@ -105,14 +102,14 @@ async function processThinking(
 // https://langchain-ai.github.io/langgraphjs/concepts/low_level/#messagesannotation
 const workflow = new StateGraph(MessagesAnnotation, ConfigurationSchema)
   // Define the nodes in our workflow
-  .addNode("callThinkingModel", callThinkingModel)
-  .addNode("processThinking", processThinking)
+  .addNode("callModel", callThinkingModel)
+  .addNode("calculator", calculatorGraph)
   // Set the entrypoint as `callThinkingModel`
-  .addEdge("__start__", "callThinkingModel")
+  .addEdge("__start__", "callModel")
   // After thinking model is called, process the thinking
-  .addEdge("callThinkingModel", "processThinking")
+  .addEdge("callModel", "calculator")
   // After processing thinking, end the workflow
-  .addEdge("processThinking", "__end__");
+  .addEdge("calculator", "__end__");
 
 // Finally, we compile it!
 // This compiles it into a graph you can invoke and deploy.
