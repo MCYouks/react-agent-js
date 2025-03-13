@@ -6,25 +6,57 @@ import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { ConfigurationSchema, ensureConfiguration } from "./configuration.js";
 import { TOOLS } from "./tools.js";
 import { loadChatModel } from "./utils.js";
+import { calculatorGraph } from "./calculator_agent.js";
 
-// Define the function that calls the model
-async function callModel(
+// Define the system prompt for the thinking agent
+const THINKING_SYSTEM_PROMPT = `
+You are a specialized thinking agent for payroll processing in the construction industry (BTP). Your job is to:
+
+1. Analyze the input data for generating a pay stub for temporary workers
+2. Describe in detail your thinking process and all calculation steps needed
+3. Explicitly mention all information, numbers, and coefficients that will be used
+4. Outline all calculations that need to be performed WITHOUT actually calculating them
+5. Structure your response in a clear, step-by-step format following the required sections of a pay stub
+
+Important elements to include in your thinking process:
+- Analysis of regular hours and overtime hours for each mission
+- Calculation steps for base salary, overtime pay with appropriate rates
+- Steps for calculating Indemnité de Fin de Mission (IFM)
+- Steps for calculating Indemnité Compensatrice de Congés Payés (ICP)
+- All applicable social security contributions and their rates
+- Net salary calculation process
+
+For example, instead of writing "The salary is 35 hours × €12/hour = €420", write:
+"To calculate the base salary:
+- Number of regular hours: 35 hours
+- Hourly rate: €12/hour
+- Calculation needed: 35 × €12"
+
+For overtime calculations, specify:
+"To calculate overtime pay:
+- Number of overtime hours: 5 hours
+- Hourly rate: €12/hour
+- Overtime multiplier: 1.25
+- Calculation needed: 5 × €12 × 1.25"
+
+Your output will be sent to a calculator agent that will perform all the calculations and complete the pay stub with the actual numerical results.
+`;
+
+// Define the function that calls the model for the thinking process
+async function callThinkingModel(
   state: typeof MessagesAnnotation.State,
   config: RunnableConfig,
 ): Promise<typeof MessagesAnnotation.Update> {
-  /** Call the LLM powering our agent. **/
+  /** Call the LLM powering our thinking agent. **/
   const configuration = ensureConfiguration(config);
 
-  // Feel free to customize the prompt, model, and other logic!
-  const model = (await loadChatModel(configuration.model)).bindTools(TOOLS);
+  // Use the thinking system prompt
+  const model = await loadChatModel(configuration.model);
 
   const response = await model.invoke([
     {
       role: "system",
-      content: configuration.systemPromptTemplate.replace(
-        "{system_time}",
-        new Date().toISOString(),
-      ),
+      content: THINKING_SYSTEM_PROMPT + "\n\n" + configuration.systemPromptTemplate
     },
     ...state.messages,
   ]);
@@ -33,39 +65,54 @@ async function callModel(
   return { messages: [response] };
 }
 
-// Define the function that determines whether to continue or not
-function routeModelOutput(state: typeof MessagesAnnotation.State): string {
+// Define the function that processes the thinking output and passes it to the calculator agent
+async function processThinking(
+  state: typeof MessagesAnnotation.State,
+  config: RunnableConfig,
+): Promise<typeof MessagesAnnotation.Update> {
   const messages = state.messages;
-  const lastMessage = messages[messages.length - 1];
-  // If the LLM is invoking tools, route there.
-  if ((lastMessage as AIMessage)?.tool_calls?.length || 0 > 0) {
-    return "tools";
-  }
-  // Otherwise end the graph.
-  else {
-    return "__end__";
-  }
+  const thinkingOutput = messages[messages.length - 1];
+  
+  // Get the configuration
+  const configuration = ensureConfiguration(config);
+  
+  // Call the calculator agent with the thinking output
+  const calculatorResult = await calculatorGraph.invoke(
+    {
+      messages: [
+        {
+          role: "user",
+          content: `Please perform all the calculations in the following thinking process and complete the pay stub:\n\n${thinkingOutput.content}`
+        }
+      ]
+    },
+    {
+      configurable: {
+        systemPromptTemplate: configuration.systemPromptTemplate,
+        model: configuration.model
+      }
+    }
+  );
+  
+  // Get the final message from the calculator agent
+  const calculatorOutput = calculatorResult.messages[calculatorResult.messages.length - 1];
+  
+  // Return the calculator output
+  return { messages: [calculatorOutput] };
 }
 
 // Define a new graph. We use the prebuilt MessagesAnnotation to define state:
 // https://langchain-ai.github.io/langgraphjs/concepts/low_level/#messagesannotation
 const workflow = new StateGraph(MessagesAnnotation, ConfigurationSchema)
-  // Define the two nodes we will cycle between
-  .addNode("callModel", callModel)
-  .addNode("tools", new ToolNode(TOOLS))
-  // Set the entrypoint as `callModel`
-  // This means that this node is the first one called
-  .addEdge("__start__", "callModel")
-  .addConditionalEdges(
-    // First, we define the edges' source node. We use `callModel`.
-    // This means these are the edges taken after the `callModel` node is called.
-    "callModel",
-    // Next, we pass in the function that will determine the sink node(s), which
-    // will be called after the source node is called.
-    routeModelOutput,
-  )
-  // This means that after `tools` is called, `callModel` node is called next.
-  .addEdge("tools", "callModel");
+  // Define the nodes in our workflow
+  .addNode("callThinkingModel", callThinkingModel)
+  .addNode("processThinking", processThinking)
+  // Set the entrypoint as `callThinkingModel`
+  .addEdge("__start__", "callThinkingModel")
+  // After thinking model is called, process the thinking
+  .addEdge("callThinkingModel", "processThinking")
+  // After processing thinking, end the workflow
+  .addEdge("processThinking", "__end__");
 
 // Finally, we compile it!
 // This compiles it into a graph you can invoke and deploy.
