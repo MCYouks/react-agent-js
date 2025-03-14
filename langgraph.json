@@ -3,7 +3,8 @@
   "dockerfile_lines": [],
   "dependencies": ["."],
   "graphs": {
-    "agent": "./src/react_agent/graph.ts:graph"
+    "agent": "./src/react_agent/graph.ts:graph",
+    "working_hours_agent": "./src/working_hours_agent/graph.ts:graph"
   },
   "env": ".env"
 }
