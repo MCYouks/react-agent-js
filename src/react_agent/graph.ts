@@ -1,12 +1,10 @@
-import { AIMessage } from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
 import { MessagesAnnotation, StateGraph } from "@langchain/langgraph";
-import { ToolNode } from "@langchain/langgraph/prebuilt";
 
 import { ConfigurationSchema, ensureConfiguration } from "./configuration.js";
 import { THINKING_TOOLS } from "./tools.js";
 import { loadChatModel } from "./utils.js";
-import { calculatorGraph } from "./calculator_agent.js";
+
 
 // Define the system prompt for the thinking agent
 const THINKING_SYSTEM_PROMPT = `
@@ -70,41 +68,15 @@ async function analyzerNode(
   return { messages: [response] };
 }
 
-// Define the function that determines whether to continue or not for the thinking agent
-function routeThinkingOutput(state: typeof MessagesAnnotation.State): "researchTool" | "calculatorNode" {
-  const messages = state.messages;
-  const lastMessage = messages[messages.length - 1];
-  // If the LLM is invoking tools, route there.
-  if ((lastMessage as AIMessage)?.tool_calls?.length || 0 > 0) {
-    return "researchTool";
-  }
-  // Otherwise, proceed to the calculator input preparation
-  else {
-    return "calculatorNode";
-  }
-}
-
 // Define a new graph with the ReAct pattern for the thinking agent
 const workflow = new StateGraph(MessagesAnnotation, ConfigurationSchema)
   // Define the nodes in our workflow
   .addNode("analyzerNode", analyzerNode)
-  .addNode("researchTool", new ToolNode(THINKING_TOOLS))
-  .addNode("calculatorNode", calculatorGraph)
   // Set the entrypoint as analyzerNode
   .addEdge("__start__", "analyzerNode")
-  // Add conditional edges for the thinking agent
-  .addConditionalEdges(
-    "analyzerNode",
-    routeThinkingOutput,
-    {
-      researchTool: "researchTool",
-      calculatorNode: "calculatorNode"
-    }
-  )
-  // After using tools, go back to the thinking model
-  .addEdge("researchTool", "analyzerNode")
+
   // After calculator input is prepared, end the workflow
-  .addEdge("calculatorNode", "__end__");
+  .addEdge("analyzerNode", "__end__");
 
 // Finally, we compile it!
 // This compiles it into a graph you can invoke and deploy.

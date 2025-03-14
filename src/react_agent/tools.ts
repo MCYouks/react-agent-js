@@ -28,7 +28,7 @@ export const CALCULATOR_TOOLS = [calculator];
  * Export an array of thinking tools for the thinking agent
  * These tools allow the thinking agent to search for information
  */
-export const THINKING_TOOLS = [searchTavily];
+export const THINKING_TOOLS = [searchTavily, calculator];
 
 /**
  * Export an array of all available tools

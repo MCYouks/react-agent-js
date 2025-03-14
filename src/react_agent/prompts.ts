@@ -254,7 +254,5 @@ Procéder par étapes logiques et claires pour éviter les erreurs de calcul.
 
 ### Outils
 
-Tu peux utiliser les outils suivants pour vérifier les données et les calculs :
-
-- **Calculator** : Pour vérifier tes calculs
+Tu n'a aucun outil fourni pour le moment
 `;
