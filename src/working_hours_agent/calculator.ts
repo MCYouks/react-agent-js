@@ -1,5 +1,5 @@
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
-import { groupBy } from 'lodash-es';
+import { groupBy, sortBy } from 'lodash-es';
 import { z } from 'zod';
 
 export const WorkDaySchema = z.object({
@@ -53,13 +53,22 @@ const groupWorkDaysByWeek = (workDays: WorkDay[]) => {
   });
 };
 
-const calculateWeeklyResults = (weekDays: WorkDay[]): WorkingHoursResult => {
-  const totalHours = weekDays.reduce((sum, day) => sum + day.workingHours, 0);
-  const regularHours = Math.min(totalHours, LEGAL_WEEKLY_HOURS);
-  const complementaryHours = 0; // À ajuster selon les règles spécifiques des heures complémentaires
+const calculateWeeklyResults = (workDays: WorkDay[], contractualWeeklyHours: number): WorkingHoursResult => {
+  const sortedWorkDays = sortBy(workDays, (day) => new Date(day.date));
+  const totalHours = sortedWorkDays.reduce((sum, day) => sum + day.workingHours, 0);
+  
+  // Calcul des heures régulières (limitées aux heures contractuelles)
+  const regularHours = Math.min(totalHours, contractualWeeklyHours);
+  
+  // Calcul des heures complémentaires (entre les heures contractuelles et 35h)
+  const complementaryHours = contractualWeeklyHours < LEGAL_WEEKLY_HOURS 
+    ? Math.min(Math.max(0, totalHours - contractualWeeklyHours), LEGAL_WEEKLY_HOURS - contractualWeeklyHours)
+    : 0;
+  
+  // Calcul des heures supplémentaires (au-delà de 35h)
   const overtimeHours = Math.max(0, totalHours - LEGAL_WEEKLY_HOURS);
 
-  const weekStart = new Date(weekDays[0].date);
+  const weekStart = new Date(sortedWorkDays[0].date);
   const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
 
   return {
@@ -75,16 +84,18 @@ const calculateWeeklyResults = (weekDays: WorkDay[]): WorkingHoursResult => {
 };
 
 const calculateMonthlySummary = (weeklyResults: WorkingHoursResult[]): WorkingHoursResult => {
-  const firstWeek = weeklyResults[0];
-  const lastWeek = weeklyResults[weeklyResults.length - 1];
+  const sortedWeeklyResults = sortBy(weeklyResults, (week) => new Date(week.start));
+
+  const firstWeek = sortedWeeklyResults[0];
+  const lastWeek = sortedWeeklyResults[sortedWeeklyResults.length - 1];
 
   const monthStart = startOfMonth(new Date(firstWeek.start)).toISOString();
   const monthEnd = endOfMonth(new Date(lastWeek.end)).toISOString();
 
-  const totalRegularHours = weeklyResults.reduce((sum, week) => sum + week.hours.regular, 0);
-  const totalComplementaryHours = weeklyResults.reduce((sum, week) => sum + week.hours.complementary, 0);
-  const totalOvertimeHours = weeklyResults.reduce((sum, week) => sum + week.hours.overtime, 0);
-  const totalHours = weeklyResults.reduce((sum, week) => sum + week.hours.total, 0);
+  const totalRegularHours = sortedWeeklyResults.reduce((sum, week) => sum + week.hours.regular, 0);
+  const totalComplementaryHours = sortedWeeklyResults.reduce((sum, week) => sum + week.hours.complementary, 0);
+  const totalOvertimeHours = sortedWeeklyResults.reduce((sum, week) => sum + week.hours.overtime, 0);
+  const totalHours = sortedWeeklyResults.reduce((sum, week) => sum + week.hours.total, 0);
 
   return {
     start: monthStart,
@@ -99,15 +110,18 @@ const calculateMonthlySummary = (weeklyResults: WorkingHoursResult[]): WorkingHo
 };
 
 export const CalculateWorkingHoursInputSchema = z.object({
-  workDays: z.array(WorkDaySchema)
+  workDays: z.array(WorkDaySchema),
+  contractualWeeklyHours: z.number().default(35).describe("Heures hebdomadaires prévues au contrat")
 });
 
 export type CalculateWorkingHoursInput = z.infer<typeof CalculateWorkingHoursInputSchema>;
 
 export const calculateWorkingHours = (input: CalculateWorkingHoursInput): CalculateWorkingHoursOutput => {
-  const { workDays } = input;
+  const { workDays, contractualWeeklyHours } = input;
   const groupedByWeek = groupWorkDaysByWeek(workDays);
-  const weeklyResults = Object.values(groupedByWeek).map(calculateWeeklyResults);
+  const weeklyResults = Object.values(groupedByWeek).map(weekWorkDays => 
+    calculateWeeklyResults(weekWorkDays, contractualWeeklyHours)
+  );
   const monthlyResult = calculateMonthlySummary(weeklyResults);
 
   return { 
@@ -116,7 +130,7 @@ export const calculateWorkingHours = (input: CalculateWorkingHoursInput): Calcul
   };
 };
 
-// Exemple d'utilisation
+// Exemple d'utilisation mis à jour
 const workDays: WorkDay[] = [
   { date: '2023-10-02', workingHours: 8 },
   { date: '2023-10-03', workingHours: 8 },
@@ -126,6 +140,7 @@ const workDays: WorkDay[] = [
   { date: '2023-10-09', workingHours: 10 },
 ];
 
-const results = calculateWorkingHours({ workDays });
+// Exemple avec un contrat à temps partiel de 28h par semaine
+const results = calculateWorkingHours({ workDays, contractualWeeklyHours: 28 });
 console.log(results.week);
 console.log(results.month);
