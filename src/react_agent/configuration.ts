@@ -2,7 +2,7 @@
  * Define the configurable parameters for the agent.
  */
 import { Annotation } from "@langchain/langgraph";
-import {  ANALYZER_PROMPT_TEMPLATE } from "./prompts.js";
+import { ANALYZER_PROMPT_TEMPLATE } from "./prompts.js";
 import { RunnableConfig } from "@langchain/core/runnables";
 
 export const ConfigurationSchema = Annotation.Root({
